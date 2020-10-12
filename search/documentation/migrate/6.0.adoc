@@ -15,45 +15,47 @@ Here we are helping you migrate your existing Search application to the latest a
 
 == Upgrade to Hibernate Search {to_version_short}.x from {from_version_short}.x
 
-The aim of this guide is to assist you migrating an existing application using any version `{from_version_short}.x` of Hibernate Search to the latest of the `{to_version_short}.x` series.
+The aim of this guide is to assist you migrating
+an existing application using any version `{from_version_short}.x` of Hibernate Search
+to the latest of the `{to_version_short}.x` series.
 If you're looking to migrate different versions see link:/search/documentation/migrate[Hibernate Search migration guides].
 
 NOTE: This document provides pointers for a migration.
-It refers to Hibernate Search version `{reference_version_full}`. If you think something is missing or something does not work, please link:/community[contact us].
+It refers to Hibernate Search version `{reference_version_full}`.
+If you think something is missing or something does not work, please link:/community[contact us].
 
 [IMPORTANT]
 ====
 Search 6 introduces new APIs, so migrating older projects will be more work than usual.
-This migration guide will be completed as we release new versions and the APIs get more and more stable,
-but for now we recommend to only attempt migrating from Search 5 to Search 6 on small projects.
 
-Ultimately, we intend to provide additional "compatibility" modules
-that will allow you to use the Search 5 APIs with Search 6 under the hood.
-However, our goal is not full backward compatibility: for some features that changed dramatically,
+We provide an additional "migration helper" module
+that will allow you to use the Search 5 APIs with Search 6 and a Lucene backend under the hood.
+However, this module does not offer full backward compatibility: for some features that changed dramatically,
 it may not be possible to use the Search 5 APIs anymore.
-The main purpose of this compatibility layer will be to spread the migration effort:
-you will have to change your Maven dependencies, configuration and more complex mappings/queries immediately,
-but you will be able to delay the more repetitive parts of the migration work (simple queries, simple entity mappings)
-to later.
+See <<migration-helper>> for more information.
 
 Finally, for those who cannot afford to, or do not want to, spend the time required to migrate,
 we intend to continue maintenance releases (= bugfixes) of Hibernate Search 5.x:
 no end-of-life date has been set at the moment.
 ====
 
+[[requirements]]
 === Requirements
 
-WARNING: This section is still incomplete. To be completed upon the CR or release.
+Hibernate Search 6 is still compatible with both JDK8 and JDK11.
+
+The required versions of dependencies changed:
 
 * The Hibernate ORM mapper now requires Hibernate ORM 5.4.4.Final or later
 (5.4.3.Final and earlier won't work correctly).
 * The Elasticsearch backend now requires Elasticsearch 5.6, 6.8 or 7.9.
 * The Lucene backend now requires Lucene 8.6.
 
+[[maven-coordinates]]
 === Maven coordinates changes
 
-WARNING: If you pull our artifacts from a Maven repository and you come from Hibernate Search 5,
-be aware that just bumping the version number will not be enough.
+If you pull Hibernate Search artifacts from a Maven repository and you come from Hibernate Search 5,
+be aware that just bumping the version number will not be enough:
 
 * the group IDs changed from `org.hibernate` to `org.hibernate.search`
 * most of the artifact IDs changed to reflect the new mapper/backend design
@@ -62,6 +64,68 @@ be aware that just bumping the version number will not be enough.
 Read the link:{hsearch-doc-url-prefix}#getting-started-dependencies[getting started guide, section "dependencies"]
 for more information.
 
+[[data-format]]
+=== Data format changes
+
+Indexes created with Hibernate Search 5 or earlier are not compatible with Hibernate Search 6.
+This goes for embedded-Lucene indexes as well as Elasticsearch indexes.
+
+In order to upgrade an application to Hibernate Search 6, all data must be reindexed.
+See link:{hsearch-doc-url-prefix}#mapper-orm-indexing-massindexer[the documentation of the `MassIndexer`]
+for instructions.
+
+[[migration-helper]]
+=== Migration helper
+
+==== Purpose
+
+Hibernate Search 6 includes a temporary additional "migration helper" module
+that provides partial compatibility with Hibernate Search 5 APIs backed by the Hibernate Search 6 implementations.
+
+This module should make migration easier by making sure that code relying on the most-frequently-used APIs
+(mapping annotations, search DSL, ...)
+continues to compile and run.
+The idea is to use the migration helper temporarily to make most of the application code (search queries, ...) work,
+making it easier to focus on migrating configuration and to assess the effort required to migrate the remaining code.
+
+[IMPORTANT]
+====
+The migration helper should not be used in production environments.
+
+It has limitations preventing full compatibility with Hibernate Search 5,
+and these limitations will never be addressed.
+
+All APIs defined in the migration helper are deprecated and will be removed in the next major version
+of Hibernate Search.
+====
+
+==== How to use the migration helper
+
+To use the migration helper, add the following dependency to your project:
+
+[source, XML, subs="+attributes"]
+----
+<dependency>
+   <groupId>org.hibernate.search</groupId>
+   <artifactId>hibernate-search-v5migrationhelper-orm</artifactId>
+   <version>{reference_version_full}</version>
+</dependency>
+----
+
+Then, try to recompile your application.
+Compilation errors should point you to the most significant API changes that require your immediate attention;
+most of the code that still compiles should work as it used to in Hibernate Search 5.
+
+[NOTE]
+====
+The migration helper only addresses Java API compatibility.
+This excludes in particular:
+
+* Configuration properties: they must still be <<configuration,replaced with Search 6 properties>>.
+* Data format: data must still be <<data-format,reindexed>>.
+====
+
+[[configuration]]
 === Configuration changes
 
 WARNING: This section is still incomplete. To be completed upon the CR or release.
@@ -80,11 +144,12 @@ for a quick introduction,
 or the link:{hsearch-doc-url-prefix}#configuration[main "configuration" section of the reference documentation]
 for more in-depth information.
 
+[[api]]
 === API changes
 
 WARNING: This section is still incomplete. To be completed upon the CR or release.
 
-A lot of APIs changed. We recommend to have a look at
+A lot of APIs changed. We recommend having a look at
 link:{hsearch-doc-url-prefix}#getting-started[the getting started guide] before migrating.
 
 [[factory]]
@@ -123,16 +188,31 @@ and as they are just callbacks that are used only once,
 the `@Factory` annotation should not be necessary.
 Whatever code was implemented in your factory can be moved to the configurer.
 
+[[spi]]
 === SPI changes
 
-WARNING: This section is still incomplete. To be completed upon the CR or release.
+Due to the extensive rewrites involved in Hibernate Search 6,
+existing integrations relying on Hibernate Search 5 are likely to require a full rewrite.
+We will be glad to help, so feel free to link:/community[contact us].
 
+[[behavior]]
 === Behavior changes
 
 WARNING: This section is still incomplete. To be completed upon the CR or release.
 
-* It is no longer possible to map multiple entity types to the same index.
+==== Indexes can only contain one type
+
+It is no longer possible to map multiple entity types to the same index.
 Each index must be mapped to exactly one entity type.
-* There is no longer a builtin, default bridge for `java.util.Class`.
-If you need to index a `Class<?>`, you will need to write a custom bridge
+
+==== No default bridge for `java.util.Class`
+
+There is no longer a builtin, default bridge for `java.util.Class`.
+
+If you need to index a `Class<?>`, you will need to write a
+link:{hsearch-doc-url-prefix}#mapper-orm-bridge-valuebridge[custom bridge]
 (probably from `Class` to `String`).
+
+Optionally, you can also register your custom bridge as a
+link:{hsearch-doc-url-prefix}#mapper-orm-bridge-resolver[default bridge]
+so that it is applied automatically and transparently to all fields defined on properties of type `Class`.

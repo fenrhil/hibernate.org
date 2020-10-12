@@ -45,8 +45,8 @@ WARNING: This section is still incomplete. To be completed upon the CR or releas
 
 * The Hibernate ORM mapper now requires Hibernate ORM 5.4.4.Final or later
 (5.4.3.Final and earlier won't work correctly).
-* The Elasticsearch backend now requires Elasticsearch 5.6, 6.8 or 7.6.
-* The Lucene backend now requires Lucene 8.5.
+* The Elasticsearch backend now requires Elasticsearch 5.6, 6.8 or 7.9.
+* The Lucene backend now requires Lucene 8.6.
 
 === Maven coordinates changes
 

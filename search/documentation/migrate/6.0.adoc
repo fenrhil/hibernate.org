@@ -409,22 +409,435 @@ when there is no transaction, on session flush].
 [[api]]
 === API changes
 
-WARNING: This section is still incomplete. To be completed upon the CR or release.
-
 A lot of APIs changed. We recommend having a look at
 link:{hsearch-doc-url-prefix}#getting-started[the getting started guide] before migrating.
 
 [[mapping-annotations]]
 ==== Mapping annotations
 
-TODO
+[[analyzer]]
+===== `@Analyzer`
+
+In Hibernate Search 5, it was possible to apply an `@Analyzer` annotation to a class or property,
+so that the corresponding analyzer would be used by default for any index field declared in this scope.
+
+There is no equivalent to that feature in Hibernate Search 6:
+all fields must specify their analyzer explicitly using `@FullTextField(analyzer = "myAnalyzer")`,
+or rely on the (global) default analyzer.
+
+Also, still in Hibernate Search 5, `@Analyzer` could point directly to a class extending `org.apache.lucene.analysis.Analyzer`,
+for example with `@Analyzer(impl = StandardAnalyzer.class)`.
+
+This is no longer possible: analyzers are now always referenced by their name.
+However, you can assign a name to a given analyzer instance using
+the link:{hsearch-doc-url-prefix}#backend-lucene-analysis-analyzers[Lucene analysis configurer].
+
+[[analyzerdef]]
+===== `@AnalyzerDef`
+
+Annotation-based analyzer definitions are no longer supported.
+
+Instead, implement an analysis configurer:
+see link:{hsearch-doc-url-prefix}#backend-lucene-analysis-analyzers[here for Lucene],
+or link:{hsearch-doc-url-prefix}#backend-elasticsearch-analysis-analyzers[here for Elasticsearch].
+
+[[analyzerdiscriminator]]
+===== `@AnalyzerDiscriminator`
+
+`@AnalyzerDiscriminator` has no direct equivalent in Hibernate Search 6:
+the analyzer assigned to each field is static and cannot change at runtime,
+because that results in unreliable matches and in scoring issues.
+
+Instead, Hibernate Search 6 allows declaring multiple index fields for a single property,
+and putting the content of that property in a different field depending on a discriminator.
+Then, when searching, you can target all fields at once.
+
+See link:{hsearch-doc-url-prefix}#mapper-orm-alternatives[Mapping multiple alternatives].
+
+[[boost]]
+===== `@Boost`
+
+Index-time boosting was deprecated in Hibernate Search 5.
+It is no longer available in Hibernate Search 6.
+
+Instead, rely on link:{hsearch-doc-url-prefix}#search-dsl-predicate-common-boost[query-time boosting].
+
+[[cachefromindex]]
+===== `@CacheFromIndex`
+
+This annotation was deprecated and non-functional in Hibernate Search 5.
+It is no longer available in Hibernate Search 6.
+
+[[calendarbridge]]
+===== `@CalendarBridge`
+
+`@CalendarBridge` is not necessary to index `Calendar` values:
+you can simply apply `@GenericField` to a property of type `Calendar`,
+and an appropriate default bridge will be used.
+
+The main purpose of `@CalendarBridge` in Hibernate Search 5 was to provide the ability
+to "truncate" calendars upon indexing, e.g. zeroing out all data more precise than the day
+with `@CalendarBridge(resolution = Resolution.DAY)`.
+
+For such use case, the recommended approach in Hibernate Search 6 is to index values with full resolution
+(not using `@CalendarBridge`) and to control resolution when searching,
+with a link:{hsearch-doc-url-prefix}#search-dsl-predicate-range[`range` predicate].
+Note that you can pass `ZonedDateTime` values to the predicate, which are much easier to truncate manually.
+For example, to match only documents whose calendar is within a given day:
+
+[source, JAVA]
+----
+Calendar toMatch = /* ... */;
+ZonedDateTime toMatchZonedDateTime = ( (GregorianCalendar) toMatch ).toZonedDateTime();
+ZonedDateTime dayStart = toMatchZonedDateTime.truncatedTo( ChronoUnit.DAYS );
+ZonedDateTime nextDayStart = dayStart.plus( 1, ChronoUnit.DAYS );
+
+List<MyEntity> hits = searchSession.search( MyEntity.class )
+        .where( f -> f.range().field( "calendar" )
+                .range( Range.canonical( dayStart, nextDayStart ), ValueConvert.NO )
+        .fetchHits( 20 );
+----
+
+If that approach doesn't work for you, link:/community/[let us know] and we'll try to come up with a solution together.
+
+[[charfilterdef]]
+===== `@CharFilterDef`
+
+See <<analyzerdef>> or <<normalizerdef>>.
+
+[[classbridge]]
+===== `@ClassBridge`, `@ClassBridges`
+
+See <<bridges>>.
+
+[[containedin]]
+===== `@ContainedIn`
+
+`@ContainedIn` is no longer necessary in Hibernate Search 6.
+
+Hibernate Search 6 infers indexing dependencies from the mapping,
+and raises errors at bootstrap when the equivalent of `@ContainedIn` cannot be applied automatically
+(for example an `@IndexedEmbedded` association with no inverse side).
+
+The error message includes potential solutions. It looks like this:
+
+> Cannot find the inverse side of the association on type 'MyIndexedType' at path '.myIndexedEmbedded<no value extractors>'
+> Hibernate Search needs this information in order to reindex 'MyIndexedType' when 'MyIndexedEmbeddedType' is modified.
+> You can solve this error by defining the inverse side of this association,
+> either with annotations specific to your integration (`@OneToMany(mappedBy = ...)` in Hibernate ORM)
+> or with the Hibernate Search `@AssociationInverseSide` annotation.
+> Alternatively, if you do not need to reindex 'MyIndexedType' when 'MyIndexedEmbeddedType' is modified,
+> you can disable automatic reindexing with `@IndexingDependency(reindexOnUpdate = ReindexOnUpdate.SHALLOW)`.
+
+Thus, the recommended approach when migrating is to simply remove all `@ContainedIn` annotations,
+then deal with the bootstrap errors, if any.
+
+TIP: Hibernate Search 6 is able to raise multiple mapping errors during a single startup,
+so you don't have to restart the application 20 times to address 20 different problems.
+
+[[datebridge]]
+===== `@DateBridge`
+
+`@DateBridge` is not necessary to index `Date` values:
+you can simply apply `@GenericField` to a property of type `java.util.Date`, `java.sql.Date`, `java.sql.Time` or `java.sql.Timestamp`,
+and an appropriate default bridge will be used.
+
+The main purpose of `@DateBridge` in Hibernate Search 5 was to provide the ability
+to "truncate" dates upon indexing, e.g. zeroing out all data more precise than the day
+with `@DateBridge(resolution = Resolution.DAY)`.
+
+For such use case, the recommended approach in Hibernate Search 6 is to index values with full resolution
+(not using `@DateBridge`) and to control resolution when searching,
+with a link:{hsearch-doc-url-prefix}#search-dsl-predicate-range[`range` predicate].
+Note that you can pass `Instant` values to the predicate, which are much easier to truncate manually.
+For example, to match only documents whose date is within a given day:
+
+[source, JAVA]
+----
+Date toMatch = /* ... */;
+ZoneId userZoneId = /* ... */;
+ZonedDateTime toMatchZonedDateTime = Instant.ofEpochMilli( toMatch.getTime() ).atZone( userZoneId );
+ZonedDateTime dayStart = toMatchZonedDateTime.truncatedTo( ChronoUnit.DAYS );
+ZonedDateTime nextDayStart = dayStart.plus( 1, ChronoUnit.DAYS );
+
+List<MyEntity> hits = searchSession.search( MyEntity.class )
+        .where( f -> f.range().field( "date" )
+                .range( Range.canonical( dayStart.toInstant(), nextDayStart.toInstant() ),
+                        ValueConvert.NO )
+        .fetchHits( 20 );
+----
+
+If that approach doesn't work for you, link:/community/[let us know] and we'll try to come up with a solution together.
+
+[[documentid]]
+===== `@DocumentId`
+
+`@DocumentId` is still available in Hibernate Search 6.
+
+However, it no longer exposes a `name` attribute,
+because <<document-id-is-not-a-field,the document ID is no longer an index field>>,
+and thus it does not need a name.
+
+[[dynamicboost]]
+===== `@DynamicBoost`
+
+Index-time boosting was deprecated in Hibernate Search 5.
+It is no longer available in Hibernate Search 6.
+
+Instead, rely on link:{hsearch-doc-url-prefix}#search-dsl-predicate-common-boost[query-time boosting].
+
+[[facet]]
+===== `@Facet`, `@Facets`
+
+Facets were replaced with aggregations, which are a generalization of the concept of faceting.
+
+To make a field aggregable, just set the `@*Field.aggregable` attribute to `Aggregable.YES`:
+
+[source, JAVA]
+----
+@KeywordField(aggregable = Aggregable.YES)
+private String myKeyword;
+@GenericField(aggregable = Aggregable.YES)
+private Integer myInteger;
+@GenericField(aggregable = Aggregable.YES)
+private LocalDate myLocalDate;
+----
+
+[NOTE]
+====
+The facet encoding options no longer exists:
+strings will be indexed as strings and numbers will be indexed as numbers.
+
+For the few cases where encoding a number as a string is necessary,
+you can define a separate field exclusively for aggregations,
+and apply a link:{hsearch-doc-url-prefix}#mapper-orm-bridge-valuebridge[custom value bridge]
+to convert the number to a string (and back).
+====
+
+[NOTE]
+====
+`aggregable` is not available on `@FullTextField`,
+because aggregation on a tokenized field would aggregate tokens instead of field values,
+which is rarely the intent.
+
+If you need both an analyzer and aggregations on the same property, create two separate fields:
+
+[source, JAVA]
+----
+@FullTextField
+@KeywordField(name = "category_aggregation", aggregable = Aggregable.YES)
+private String category;
+----
+
+For instructions on how to execute aggregations, see <<searching-facet>>.
+
+This will lead to two separate fields being created in the index, for the same property.
+Just make sure to use the correct field name when searching:
+`category` when creating link:{hsearch-doc-url-prefix}#search-dsl-predicate-match[predicates],
+but `category_aggregation` when creating link:{hsearch-doc-url-prefix}#search-dsl-aggregation-terms[aggregations].
+====
+
+The `@Field` annotation was split into multiple annotations, specific to each field type.
+
+[[field]]
+===== `@Field`, `@Fields`
+
+The `@Field` annotation was split into multiple annotations, specific to each field type.
+
+[[field-basics]]
+====== Basics
+
+Here is a quick reference of how to convert a `@Field` annotation to Hibernate Search 6:
+
+[cols="1,l,l",options="header"]
+|====
+|Property type|Hibernate Search 5|Hibernate Search 6
+|`String`, `Character`, `char`, enum|@Field|@FullTextField
+|`String`, `Character`, `char`, enum|@Field(analyzer = @Analyzer(definition = "myAnalyzer")) .2+|@FullTextField(analyzer = "myAnalyzer")
+|`String`, `Character`, `char`, enum|@Field
+@Analyzer(definition = "myAnalyzer")
+|`String`, `Character`, `char`, enum|@Field(normalizer = @Normalizer(definition = "myNormalizer"))|@KeywordField(normalizer = "myNormalizer")
+|`String`, `Character`, `char`, enum|@Field(analyze = analyze.NO)|@KeywordField
+|Other|@Field @NumericField|@GenericField
+|Other|@Field|@GenericField
+|====
+
+[[field-analyze]]
+====== `@Field.analyze`
+
+`@Field.analyze` has no direct equivalent in Hibernate Search 6.
+Instead of enabling/disabling analysis explicitly,
+<<field-basics,pick the right `@*Field` annotation according to your needs>>.
+
+[[field-analyzer]]
+====== `@Field.analyzer`
+
+See <<field-basics>>.
+
+[[field-boost]]
+====== `@Field.boost`
+
+Index-time boosting was deprecated in Hibernate Search 5.
+It is no longer available in Hibernate Search 6.
+
+Instead, rely on link:{hsearch-doc-url-prefix}#search-dsl-predicate-common-boost[query-time boosting].
+
+[[field-bridge]]
+====== `@Field.bridge`
+
+See <<bridges>>.
+
+[[field-index]]
+====== `@Field.index`
+
+`@Field.index` is now `@*Field.searchable`:
+
+[cols="l,l",options="header"]
+|====
+|Hibernate Search 5|Hibernate Search 6
+|@Field(index = Index.YES)|@GenericField(searchable = Searchable.YES)
+OR @FullTextField(searchable = Searchable.YES)
+OR @KeywordField(searchable = Searchable.YES)
+|@Field(index = Index.NO)|@GenericField(searchable = Searchable.NO)
+OR @FullTextField(searchable = Searchable.NO)
+OR @KeywordField(searchable = Searchable.NO)
+|====
+
+[[field-indexnullas]]
+====== `@Field.indexNullAs`
+
+`@Field.indexNullAs` is still available for most Hibernate Search 6's `@*Field` annotations:
+
+[cols="l,l",options="header"]
+|====
+|Hibernate Search 5|Hibernate Search 6
+|@Field(indexNullAs = "_null_")|@GenericField(indexNullAs = "_null_")
+OR @KeywordField(indexNullAs = "_null_")
+|====
+
+However:
+
+* Its usage is discouraged, as the new link:{hsearch-doc-url-prefix}#search-dsl-predicate-exists[`exists` predicate]
+introduced in Hibernate Search 6 allows finding documents where a field is present or not
+*without* relying on `indexNullAs`.
+* `indexNullAs` is not available on `@FullTextField`.
+* The default null token is no longer supported, i.e. `Field.DEFAULT_NULL_TOKEN` has no equivalent in Hibernate search 6.
+Each field that requires `indexNullAs` must have its value set explicitly.
+* The (text) value passed to `indexNullAs` must be link:{hsearch-doc-url-prefix}#mapper-orm-directfieldmapping-supported-types[formatted according to the type of the field].
+
+[[field-name]]
+====== `@Field.name`
+
+`@Field.name` stays the same in Hibernate Search 6's `@*Field` annotations:
+
+[cols="l,l",options="header"]
+|====
+|Hibernate Search 5|Hibernate Search 6
+|@Field(name = "myField")|@GenericField(name = "myField")
+OR @FullTextField(name = "myField")
+OR @KeywordField(name = "myField")
+|====
+
+[[field-normalizer]]
+====== `@Field.normalizer`
+
+See <<field-basics>>.
+
+[[field-norms]]
+====== `@Field.norms`
+
+`@Field.norms` only has an equivalent in Hibernate Search 6's `@FullTextField` and `@KeywordField`.
+The `Norms` enum has moved to `org.hibernate.search.engine.backend.types.Norms`.
+
+[[field-store]]
+====== `@Field.store`
+
+`@Field.store` is now `@*Field.projectable`:
+
+[cols="l,l",options="header"]
+|====
+|Hibernate Search 5|Hibernate Search 6
+|@Field(store = Store.YES)|@GenericField(projectable = Projectable.YES)
+OR @FullTextField(projectable = Projectable.YES)
+OR @KeywordField(projectable = Projectable.YES)
+|@Field(store = Store.NO)|@GenericField(projectable = Projectable.NO)
+OR @FullTextField(projectable = Projectable.NO)
+OR @KeywordField(projectable = Projectable.NO)
+|====
+
+[[field-termVector]]
+====== `@Field.termVector`
+
+`@Field.termVector` only has an equivalent in Hibernate Search 6's `@FullTextField`.
+The `TermVector` enum has moved to `org.hibernate.search.engine.backend.types.TermVector`.
+
+[[fieldbridge]]
+===== `@FieldBridge`
+
+See <<bridges>>.
+
+[[fulltextfilterdef]]
+===== `@FullTextFilterDef`, `@FullTextFilterDefs`
+
+Full-text filters have no direct equivalent in Hibernate Search 6.
+
+See <<full-text-filter>>.
+
+[[indexed]]
+===== `@Indexed`
+
+NOTE: In Hibernate Search 6, <<indexed-is-inherited,`@Indexed` is inherited>>.
+
+[[normalizer]]
+===== `@Normalizer`
+
+In Hibernate Search 5, `@Normalizer` could point directly to a class extending `org.apache.lucene.analysis.Analyzer`,
+for example with `@Normalizer(impl = MyNormalizer.class)`.
+
+This is no longer possible: normalizers are now always referenced by their name.
+However, you can assign a name to a given normalizer instance using
+the link:{hsearch-doc-url-prefix}#backend-lucene-analysis-analyzers[Lucene analysis configurer].
+
+[[normalizerdef]]
+===== `@NormalizerDef`
+
+Annotation-based normalizer definitions are no longer supported.
+
+Instead, implement an analysis configurer:
+see link:{hsearch-doc-url-prefix}#backend-lucene-analysis-analyzers[here for Lucene],
+or link:{hsearch-doc-url-prefix}#backend-elasticsearch-analysis-analyzers[here for Elasticsearch].
 
 [[sortablefield]]
 ===== `@SortableField`
 
-TODO
+`@SortableField` no longer exists; instead, use `@*Field.sortable`:
 
-[[field-indexnullas]] TODO @Field.indexNullAs, explain why no longer necessary in most cases
+[cols="l,l",options="header"]
+|====
+|Hibernate Search 5|Hibernate Search 6
+|@Field @SortableField|@GenericField(sortable = Sortable.YES)
+OR @KeywordField(sortable = Sortable.YES)
+|====
+
+[NOTE]
+====
+`sortable` is not available on `@FullTextField`,
+because link:{hsearch-doc-url-prefix}#mapper-orm-directfieldmapping-annotations-fulltextfield[tokenized data cannot be reliably sorted on].
+
+If you need both an analyzer and sorts on the same property, create two separate fields:
+
+[source, JAVA]
+----
+@FullTextField
+@KeywordField(name = "title_sort", normalizer = "myNormalizer", sortable = Sortable.YES)
+private String title;
+----
+
+This will lead to two separate fields being created in the index, for the same property.
+Just make sure to use the correct field name when searching:
+`title` when creating link:{hsearch-doc-url-prefix}#search-dsl-predicate-match[predicates],
+but `title_sort` when creating link:{hsearch-doc-url-prefix}#search-dsl-sort-field[sorts].
+====
 
 [[mapping-programmatic]]
 ==== Programmatic mapping
@@ -447,6 +860,35 @@ To do so, just define a custom analyzer named `default`.
 
 NOTE: With the Lucene backend, analysis configurers can be used to override the default similarity.
 See link:{hsearch-doc-url-prefix}#backend-lucene-analysis-similarity[here for more information]
+
+[[bridges]]
+==== Bridges
+
+The bridge API was completely reworked in Hibernate Search 6 to offer a more powerful, Lucene-independent solution.
+New features include:
+
+* the ability to link:{hsearch-doc-url-prefix}#mapper-orm-bridge-index-field-type-dsl[define field types precisely],
+allowing in particular to pick an analyzer or to enable aggregation (faceting) on a bridge-declared field;
+* the ability to link:{hsearch-doc-url-prefix}#mapper-orm-bridge-bridgedelement-dependencies[declare the properties the bridge relies on],
+allowing Hibernate Search to reindex less often;
+* the ability to link:{hsearch-doc-url-prefix}#mapper-orm-bridge-index-field-dsl-dynamic[declare dynamic fields with a precise type]
+which the Search DSL will be aware of;
+* the ability to link:{hsearch-doc-url-prefix}#mapper-orm-custom-annotations[define custom field annotations];
+* and link:{hsearch-doc-url-prefix}#mapper-orm-bridge[more].
+
+If your application relied on custom bridges with Hibernate Search 5,
+and you need to re-implement them with Hibernate Search 6,
+see link:{hsearch-doc-url-prefix}#mapper-orm-directfieldmapping-custom-types[mapping custom property types].
+
+[[searching]]
+==== Searching
+
+TODO
+
+[[searching-facet]]
+===== Facets
+
+TODO
 
 [[error-handler]]
 ==== Error handler
@@ -537,3 +979,11 @@ link:{hsearch-doc-url-prefix}#mapper-orm-bridge-valuebridge[custom bridge]
 Optionally, you can also register your custom bridge as a
 link:{hsearch-doc-url-prefix}#mapper-orm-bridge-resolver[default bridge]
 so that it is applied automatically and transparently to all fields defined on properties of type `Class`.
+
+[[document-id-is-not-a-field]]
+==== The document ID is not an index field
+
+TODO
+
+[[indexed-is-inherited]]
+==== `@Indexed` is inherited
